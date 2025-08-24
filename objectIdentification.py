@@ -1,97 +1,96 @@
 import sys
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QLabel, QPushButton,
-    QVBoxLayout, QWidget, QFileDialog, QLineEdit
+    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QLineEdit
 )
 from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 from PySide6.QtCore import Qt
 from ultralytics import YOLO
 import cv2
 
-class ObjectDetectionApp(QMainWindow):
+class ObjectDetector(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YOLO Object Detection with Prompt")
+        self.setWindowTitle("Prompt - Object Finder")
         self.setGeometry(200, 200, 900, 700)
 
-        # YOLO model
-        self.model = YOLO("yolov8n.pt")  # use yolov8n.pt for speed, or yolov8s.pt for more accuracy
-        self.image = None
-        self.cv_image = None
+        # Layout
+        layout = QVBoxLayout(self)
 
         # Widgets
-        self.label = QLabel("Load an image to start", self)
+        self.label = QLabel("Upload an image")
         self.label.setAlignment(Qt.AlignCenter)
-
-        self.load_btn = QPushButton("Load Image", self)
-        self.load_btn.clicked.connect(self.load_image)
-
-        self.prompt_box = QLineEdit(self)
-        self.prompt_box.setPlaceholderText("Type an object to detect (e.g. 'bottle', 'person')")
-
-        self.detect_btn = QPushButton("Detect", self)
-        self.detect_btn.clicked.connect(self.detect_objects)
-
-        # Layout
-        layout = QVBoxLayout()
         layout.addWidget(self.label)
-        layout.addWidget(self.load_btn)
+
+        self.upload_btn = QPushButton("Upload Image")
+        self.upload_btn.clicked.connect(self.upload_image)
+        layout.addWidget(self.upload_btn)
+
+        self.prompt_box = QLineEdit()
+        self.prompt_box.setPlaceholderText("Enter objects to find (e.g. bottle, vase, chair)")
         layout.addWidget(self.prompt_box)
+
+        self.detect_btn = QPushButton("Find Objects")
+        self.detect_btn.clicked.connect(self.find_objects)
         layout.addWidget(self.detect_btn)
 
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        # Variables
+        self.image_path = None
+        self.model = YOLO("yolov8s.pt")  # small model
 
-    def load_image(self):
+    def upload_image(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Image", "", "Images (*.png *.jpg *.jpeg)")
         if file_name:
-            self.cv_image = cv2.imread(file_name)
-            self.display_image(self.cv_image)
+            self.image_path = file_name
+            pixmap = QPixmap(self.image_path).scaled(800, 600, Qt.KeepAspectRatio)
+            self.label.setPixmap(pixmap)
 
-    def display_image(self, cv_img):
-        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(qt_image)
-        self.label.setPixmap(pixmap.scaled(self.label.width(), self.label.height(), Qt.KeepAspectRatio))
-
-    def detect_objects(self):
-        if self.cv_image is None:
-            self.label.setText("Please load an image first.")
+    def find_objects(self):
+        if not self.image_path:
+            self.label.setText("Please upload an image first.")
             return
 
-        target = self.prompt_box.text().strip().lower()
-        if not target:
-            self.label.setText("Please type an object to detect.")
+        prompt_text = self.prompt_box.text().strip().lower()
+        if not prompt_text:
+            self.label.setText("Please enter one or more objects (comma separated).")
             return
 
-        results = self.model(self.cv_image)
-        found = False
-        img_with_boxes = self.cv_image.copy()
+        # Convert prompt to list of target objects
+        target_objects = [p.strip() for p in prompt_text.split(",") if p.strip()]
+        print("Looking for:", target_objects)
 
+        # Run YOLO
+        results = self.model(self.image_path)
+        img = cv2.imread(self.image_path)
+        h, w, ch = img.shape
+
+        found_any = False
         for box in results[0].boxes:
             cls = int(box.cls[0])
             label = self.model.names[cls].lower()
-            if target in label:  # match user prompt
-                found = True
+            if label in target_objects:  # check if detected label matches any requested
+                found_any = True
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                conf = float(box.conf[0])
 
-                # Draw bounding box
-                cv2.rectangle(img_with_boxes, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(img_with_boxes, f"{label} {conf:.2f}", 
-                            (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 
-                            0.9, (0, 255, 0), 2)
+                # Draw rectangle
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                cv2.putText(img, label, (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        if found:
-            self.display_image(img_with_boxes)
-        else:
-            self.label.setText(f"No '{target}' found in image.")
+        if not found_any:
+            self.label.setText(f"No objects found from {target_objects}.")
+            return
+
+        # Convert OpenCV image (BGR) to QImage
+        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_img.shape
+        bytes_per_line = ch * w
+        qimg = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
+        pixmap = QPixmap.fromImage(qimg).scaled(800, 600, Qt.KeepAspectRatio)
+        self.label.setPixmap(pixmap)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = ObjectDetectionApp()
+    window = ObjectDetector()
     window.show()
     sys.exit(app.exec())
