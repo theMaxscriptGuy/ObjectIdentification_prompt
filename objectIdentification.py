@@ -6,7 +6,7 @@ from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt
 from ultralytics import YOLO
 import cv2
-import re
+import spacy
 
 class ObjectDetector(QWidget):
     def __init__(self):
@@ -37,6 +37,7 @@ class ObjectDetector(QWidget):
         # Variables
         self.image_path = None
         self.model = YOLO("yolov8s.pt")  # small model
+        self.nlp = spacy.load("en_core_web_sm")  # spaCy NLP model
 
     def upload_image(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Image", "", "Images (*.png *.jpg *.jpeg)")
@@ -45,25 +46,28 @@ class ObjectDetector(QWidget):
             pixmap = QPixmap(self.image_path).scaled(800, 600, Qt.KeepAspectRatio)
             self.label.setPixmap(pixmap)
 
+    def extract_objects_from_prompt(self, prompt_text):
+        """
+        Use NLP to pull out likely object names (nouns).
+        """
+        doc = self.nlp(prompt_text)
+        nouns = [token.text.lower() for token in doc if token.pos_ in ("NOUN", "PROPN")]
+        return nouns
+
     def find_objects(self):
         if not self.image_path:
             self.label.setText("Please upload an image first.")
             return
 
-        prompt_text = self.prompt_box.text().strip().lower()
+        prompt_text = self.prompt_box.text().strip()
         if not prompt_text:
             self.label.setText("Please enter a prompt like: find bottle in the image.")
             return
 
-        # Extract objects from natural language prompt
-        match = re.search(r"find (.+?) in the image", prompt_text)
-        if match:
-            objects_text = match.group(1)
-            # Replace "and" with "," for easier splitting
-            objects_text = objects_text.replace(" and ", ",")
-            target_objects = [p.strip() for p in objects_text.split(",") if p.strip()]
-        else:
-            self.label.setText("Could not understand the prompt. Try: find chair in the image.")
+        # Extract target objects using NLP
+        target_objects = self.extract_objects_from_prompt(prompt_text)
+        if not target_objects:
+            self.label.setText("Could not understand the prompt. Try again with a noun like chair, bottle, etc.")
             return
 
         print("Looking for:", target_objects)
